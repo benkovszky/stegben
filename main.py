@@ -34,7 +34,7 @@ def create_validation_list(image, hidden_length, interval):
 
     #lista előre feltöltése a méret miatt
     validation_data = [0] * hidden_length
-    
+    sample_length = (interval//200)+1
 
     for i in range(hidden_length//interval):
         shift = 0
@@ -42,7 +42,7 @@ def create_validation_list(image, hidden_length, interval):
 
         #eltolás mértékének kiszámítása
 
-        for j in range(interval):
+        for j in range(sample_length):
             r_sample, g_sample, b_sample = pixels[x_position, y_position][:3]
             r_sample, g_sample, b_sample = zero_last_bit(r_sample, g_sample, b_sample)
 
