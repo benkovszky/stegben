@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
 import math
-import random
+
 
 #segédfüggvények
 def zero_last_bit(r, g, b):
