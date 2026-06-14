@@ -907,7 +907,7 @@ class SteganographyApp(QMainWindow):
             # Szöveg átalakítása bitekké
             text_bits = text_to_bits(encrypted_text)
             base, ext = os.path.splitext(self.current_image_path)
-            output_path = f"{base}_hidden{ext}"
+            output_path = f"{base}_hidden.png"
             # Szöveg elrejtése + kulcs hozzáfűzése
             embed_text_in_image(self.current_image_path, output_path, text_bits)
             self.status_label.setText(f"Szöveg elrejtve: {os.path.basename(output_path)}")
@@ -919,33 +919,50 @@ class SteganographyApp(QMainWindow):
         if not self.current_image:
             QMessageBox.warning(self, "Figyelmeztetés", "Előbb válasszon ki egy képet!")
             return
-        
+
         if not self.current_key64 or not self.current_key256_hex:
             QMessageBox.warning(self, "Figyelmeztetés", "Nem sikerült kulcsokat generálni! Ellenőrizze a kép(ek)et!")
             return
-        
+
         text = self.text_edit.toPlainText()
         if not text:
             QMessageBox.warning(self, "Figyelmeztetés", "Írjon be szöveget az elrejtéshez!")
             return
-        
+
         reply = QMessageBox.question(self, 'Megerősítés', 
-                                     'Biztosan módosítani szeretné az eredeti képet?',
-                                     QMessageBox.Yes | QMessageBox.No, 
-                                     QMessageBox.No)
-        
+                                    'Biztosan módosítani szeretné az eredeti képet?',
+                                    QMessageBox.Yes | QMessageBox.No, 
+                                    QMessageBox.No)
+
         if reply == QMessageBox.Yes:
             try:
                 # Szöveg titkosítása
                 encrypted_text = aes_encrypt(text, self.current_key256_hex)
                 # Szöveg átalakítása bitekké
                 text_bits = text_to_bits(encrypted_text)
-                # Szöveg elrejtése + kulcs hozzáfűzése
-                embed_text_in_image(self.current_image_path, self.current_image_path, text_bits)
+
+                original_path = self.current_image_path
+                file_ext = os.path.splitext(original_path)[1].lower()
+
+                # Ha nem PNG, akkor az új mentési útvonal .png legyen
+                if file_ext != '.png':
+                    new_path = os.path.splitext(original_path)[0] + '.png'
+                else:
+                    new_path = original_path  # PNG esetén felülírjuk az eredetit
+
+                # Szöveg elrejtése a képbe (input: original_path, output: new_path)
+                embed_text_in_image(original_path, new_path, text_bits)
+
+                # Ha új fájlt hoztunk létre (nem PNG eredeti), töröljük az eredetit
+                if new_path != original_path:
+                    os.remove(original_path)
+                    self.current_image_path = new_path
+
                 # Kép újratöltése
                 self.current_image = Image.open(self.current_image_path)
                 self.status_label.setText(f"Kép módosítva: {os.path.basename(self.current_image_path)}")
                 QMessageBox.information(self, "Siker", "A kép sikeresen módosítva!")
+
             except Exception as e:
                 QMessageBox.critical(self, "Hiba", f"Hiba a kép módosításakor: {e}")
     
@@ -1003,7 +1020,7 @@ class SteganographyApp(QMainWindow):
             output_name = self.image_output_name.text().strip()
             if not output_name:
                 base, ext = os.path.splitext(self.base_image_path)
-                output_name = f"{base}_with_hidden{ext}"
+                output_name = f"{base}_with_hidden.png"
             else:
                 # Biztosítsuk, hogy a megfelelő kiterjesztés legyen
                 if not output_name.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
