@@ -12,7 +12,6 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
 import math
 
-
 #segédfüggvények
 def zero_last_bit(r, g, b):
     r -= r % 2
