@@ -293,7 +293,7 @@ def embed_text_in_image(image_path, output_path, binary_text):
     validation_list = create_validation_list(img, hidden_length, interval)
 
     x_position = 14
-    y_position = 88
+    y_position = 8
     for i in range(width):
         for j in range(height):
             idx = i * height + j
@@ -363,7 +363,7 @@ def extract_hidden_text_with_key(image):
     extracted_binary = [0] * (hidden_length // interval)
 
     x_position = 14
-    y_position = 88
+    y_position = 8
     for i in range(width):
         for j in range(height):
             idx = i * height + j
