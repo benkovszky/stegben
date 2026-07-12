@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QMessageBox, QGroupBox, QCheckBox,
                              QTabWidget, QLineEdit)
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QIcon
 import math
 
 #segédfüggvények
@@ -18,7 +18,12 @@ def zero_last_bit(r, g, b):
     g -= g % 2
     b -= b % 2
     return r, g, b
-
+def resource_path(path):
+    try:
+        base = sys._MEIPASS
+    except AttributeError:
+        base = os.path.abspath(".")
+    return os.path.join(base, path)
 
 def create_validation_list(image, hidden_length, interval):
     pixels = image.load()
@@ -1106,6 +1111,7 @@ class SteganographyApp(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(resource_path("icon.ico")))
     window = SteganographyApp()
     window.show()
     sys.exit(app.exec_())
