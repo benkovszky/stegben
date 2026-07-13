@@ -1,0 +1,16 @@
+windows verzió felépítése
+nyiss meg vscode-ban egy mappát, ahol a projekt szeretnéd hogy legyen
+nyiss egy terminalt 
+git clone https://github.com/benkovszky/stegben.git .
+
+hozz létre egy python virtuális környezetet
+
+pip install -r .\requirements.txt
+pip install PyInstaller
+
+ha azt akarod, hogy ne legyen visszafejthető a képed a repo alapján, akkor ajánlom a embed_text_in_image és a extract_hidden_text_with_key függvényekben a kezdő pozíció átírását, ami jelenleg 6 és 7. Fontos hogy mindkét függvényben ugyan annak az értéknek kell lennie. Ha ezt megváltoztatod, akkor teljesen más lesz az eredmény. Figyelj oda, hogy ne legyen az érték nagyobb, mint a képed felbontása. Ha 100-ig mész el, akkor kb rendben vagy. 
+
+Építsd fel az exe file-t a következő paranccsal:
+python -m PyInstaller -F -w --name StegBen --icon=icon.ico --add-data "icon.ico;." windows.py
+
+Az elkészült .exe-t a dist mappában találod.
