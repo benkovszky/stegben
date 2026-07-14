@@ -13,10 +13,6 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import ctypes
 
-# ============================================================
-# A MEGLÉVŐ STEGANOGRÁFIAI FÜGGVÉNYEK (EREDETI FORMÁBAN, KOMMENTEKKEL)
-# ============================================================
-
 #segédfüggvények
 def zero_last_bit(r, g, b):
     r -= r % 2
@@ -537,7 +533,7 @@ def extract_hidden_image(image_path, output_path, key_hex: str):
 
 
 # ============================================================
-# MODERN FELHASZNÁLÓI FELÜLET (PRECIZ IGAZÍTÁSOKKAL)
+# MODERN FELHASZNÁLÓI FELÜLET 
 # ============================================================
 
 ctk.set_appearance_mode("System")
