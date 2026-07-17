@@ -25,6 +25,7 @@ def resource_path(path):
     except AttributeError:
         base = os.path.abspath(".")
     return os.path.join(base, path)
+    
 
 def create_validation_list(image, hidden_length, interval):
     pixels = image.load()
