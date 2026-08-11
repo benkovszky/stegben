@@ -105,19 +105,6 @@ def search_64_bit_key(image):
     print(f"Rejtett adat hossza (bitekben): {hidden_length}")
     return hidden_length
 
-def extract_interval(image):
-    pixels = image.load()
-    width, height = image.size
-    #interval kinyerése
-    interval_bits = ""
-    for i in range(32):
-        pixel = pixels[width - 1, height - 1 -i]
-        interval_bits += str(pixel[0] & 1)
-    interval = int(interval_bits, 2)
-    print(f"Kinyert intervallum: {interval}")
-    return interval
-
-
 #64 bites kulcs a szöveg végének megtalálásához
 def generate_64_bit_key_from_image(img):
     width, height = img.size
@@ -277,8 +264,16 @@ def bits_to_bytes(bits: str) -> bytes:
         for i in range(0, len(bits) - 7, 8)
     )
 
+def reverse(number):
+    if number == 1:
+        return 0
+    else:
+        return 1
+
+#interval elrejtése 
 def embed_interval(interval, pixels, width, height):
     interval_bits = [int(bit) for bit in format(interval & 0xFFFFFFFF, '032b')]
+    interval_bits = interval_encryption(pixels, interval_bits, width, height)
 
     for i in range(32):
         x, y = width - 1, height - 1 - i
@@ -286,25 +281,51 @@ def embed_interval(interval, pixels, width, height):
         pixel[0] = (pixel[0] & ~1) | interval_bits[i]
         pixels[x, y] = tuple(pixel)
 
-
+#interval kinyerése
 def extract_interval(image):
     pixels = image.load()
     width, height = image.size
-
     # intervallum bitjeinek kinyerése
     interval_bits = []
-
     for i in range(32):
         pixel = pixels[width - 1, height - 1 - i]
         interval_bits.append(pixel[0] & 1)
-
+    decrypted_interval = interval_encryption(pixels, interval_bits, width, height)
     # bitek -> egész szám
-    interval = int(''.join(map(str, interval_bits)), 2)
-
+    interval = int(''.join(map(str, decrypted_interval)), 2)
     print(f"Kinyert intervallum: {interval}")
     return interval
 
 
+
+#interval bit szintű titkosítása
+def interval_encryption(pixels, interval_bits, width, height):
+    encrypted_interval_bits = [0] * 32
+    x_position = 6
+    y_position = 7
+    channel = 0
+    for i in range(32):
+        r, g, b = pixels[x_position, y_position][:3]
+        r, g, b = zero_last_bit(r, g, b)
+        if (r + g + b) %6 == 2:
+            channel = r
+        if (r + g + b) %6 == 4:
+            channel = g
+        if (r + g + b) %6 == 0:
+            channel = b
+        reference = (channel>>((i%7)+1)) & 1
+        #print(f"A szám: {reference}")
+        if reference == 0:
+            encrypted_interval_bits[i]= interval_bits[i]
+        else:
+            encrypted_interval_bits[i] = reverse(interval_bits[i])
+
+        #mintavétel pozíciójának frissítése
+        x_position+= r +b
+        y_position+= r+g
+        x_position = x_position % width
+        y_position = y_position % height
+    return encrypted_interval_bits
 
 def embed_text_in_image(image_path, output_path, binary_text):
     img = Image.open(image_path).convert('RGB')
@@ -375,7 +396,6 @@ def embed_text_in_image(image_path, output_path, binary_text):
         
     img.save(output_path)
 
-
 #szöveg kinyerése
 def extract_hidden_text_with_key(image):
     pixels = image.load()
@@ -432,7 +452,6 @@ def extract_hidden_text_with_key(image):
 
     return hidden_text
 
-
 def hidden_image_to_bits(base_image_path, hidden_image_path, key_hex: str):
     """
     A rejtendő kép pixeleit AES-sel titkosítja, majd bitekké alakítja.
@@ -475,7 +494,6 @@ def hidden_image_to_bits(base_image_path, hidden_image_path, key_hex: str):
     length_bits = format(enc_len & 0xFFFFFFFF, '032b')
 
     return encrypted_bits, resolution_bits, length_bits
-
 
 #kép elrejtése a képben
 def hidden_bits_to_image(image_path, output_path, encrypted_bits, resolution_bits, length_bits):
@@ -558,7 +576,6 @@ def extract_hidden_image(image_path, output_path, key_hex: str):
     hidden_img.putdata(hidden_pixels)
     hidden_img.save(output_path)
     print(f"Titkosított rejtett kép kinyerve és visszafejtve: {output_path}")
-
 
 # ============================================================
 # MODERN FELHASZNÁLÓI FELÜLET 
