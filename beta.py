@@ -105,7 +105,7 @@ def search_64_bit_key(image):
     print(f"Rejtett adat hossza (bitekben): {hidden_length}")
     return hidden_length
 
-def extraxt_interval(image):
+def extract_interval(image):
     pixels = image.load()
     width, height = image.size
     #interval kinyerése
@@ -277,19 +277,46 @@ def bits_to_bytes(bits: str) -> bytes:
         for i in range(0, len(bits) - 7, 8)
     )
 
+def embed_interval(interval, pixels, width, height):
+    interval_bits = [int(bit) for bit in format(interval & 0xFFFFFFFF, '032b')]
+
+    for i in range(32):
+        x, y = width - 1, height - 1 - i
+        pixel = list(pixels[x, y])
+        pixel[0] = (pixel[0] & ~1) | interval_bits[i]
+        pixels[x, y] = tuple(pixel)
+
+
+def extract_interval(image):
+    pixels = image.load()
+    width, height = image.size
+
+    # intervallum bitjeinek kinyerése
+    interval_bits = []
+
+    for i in range(32):
+        pixel = pixels[width - 1, height - 1 - i]
+        interval_bits.append(pixel[0] & 1)
+
+    # bitek -> egész szám
+    interval = int(''.join(map(str, interval_bits)), 2)
+
+    print(f"Kinyert intervallum: {interval}")
+    return interval
+
+
+
 def embed_text_in_image(image_path, output_path, binary_text):
     img = Image.open(image_path).convert('RGB')
     pixels = img.load()
     width, height = img.size
     interval = int(((width * height)- 200) // len(binary_text))
 
-    #interval egésszé alakítása a float hiba elkerüléséhez
-    interval_bits = format(interval & 0xFFFFFFFF, '032b')
-    for i in range(32):
-        x, y = width - 1, height - 1 - i
-        pixel = list(pixels[x, y])
-        pixel[0] = (pixel[0] & ~1) | int(interval_bits[i])
-        pixels[x, y] = tuple(pixel)   # visszaírás
+ 
+   
+
+    #interval elrejtése
+    embed_interval(interval, pixels, width, height)
 
     hidden_length = len(binary_text) * interval
     print("az interval értéke: ", interval)
@@ -354,7 +381,7 @@ def extract_hidden_text_with_key(image):
     pixels = image.load()
     width, height = image.size
     
-    interval = extraxt_interval(image)
+    interval = extract_interval(image)
     hidden_length = search_64_bit_key(image)
     validation_data = create_validation_list(image, hidden_length, interval)
 

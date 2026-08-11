@@ -1,16 +1,17 @@
 import sys
 import os
 import base64
-from PIL import Image
+import math
+import shutil
+import tempfile
+from PIL import Image, ImageTk
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QTextEdit, QLabel, 
-                             QFileDialog, QMessageBox, QGroupBox, QCheckBox,
-                             QTabWidget, QLineEdit)
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPixmap, QIcon
-import math
+
+# Modern UI könyvtárak
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
+import ctypes
 
 #segédfüggvények
 def zero_last_bit(r, g, b):
@@ -24,6 +25,7 @@ def resource_path(path):
     except AttributeError:
         base = os.path.abspath(".")
     return os.path.join(base, path)
+    
 
 def create_validation_list(image, hidden_length, interval):
     pixels = image.load()
@@ -103,7 +105,7 @@ def search_64_bit_key(image):
     print(f"Rejtett adat hossza (bitekben): {hidden_length}")
     return hidden_length
 
-def extraxt_interval(image):
+def extract_interval(image):
     pixels = image.load()
     width, height = image.size
     #interval kinyerése
@@ -275,19 +277,46 @@ def bits_to_bytes(bits: str) -> bytes:
         for i in range(0, len(bits) - 7, 8)
     )
 
+def embed_interval(interval, pixels, width, height):
+    interval_bits = [int(bit) for bit in format(interval & 0xFFFFFFFF, '032b')]
+
+    for i in range(32):
+        x, y = width - 1, height - 1 - i
+        pixel = list(pixels[x, y])
+        pixel[0] = (pixel[0] & ~1) | interval_bits[i]
+        pixels[x, y] = tuple(pixel)
+
+
+def extract_interval(image):
+    pixels = image.load()
+    width, height = image.size
+
+    # intervallum bitjeinek kinyerése
+    interval_bits = []
+
+    for i in range(32):
+        pixel = pixels[width - 1, height - 1 - i]
+        interval_bits.append(pixel[0] & 1)
+
+    # bitek -> egész szám
+    interval = int(''.join(map(str, interval_bits)), 2)
+
+    print(f"Kinyert intervallum: {interval}")
+    return interval
+
+
+
 def embed_text_in_image(image_path, output_path, binary_text):
     img = Image.open(image_path).convert('RGB')
     pixels = img.load()
     width, height = img.size
     interval = int(((width * height)- 200) // len(binary_text))
 
-    #interval egésszé alakítása a float hiba elkerüléséhez
-    interval_bits = format(interval & 0xFFFFFFFF, '032b')
-    for i in range(32):
-        x, y = width - 1, height - 1 - i
-        pixel = list(pixels[x, y])
-        pixel[0] = (pixel[0] & ~1) | int(interval_bits[i])
-        pixels[x, y] = tuple(pixel)   # visszaírás
+ 
+   
+
+    #interval elrejtése
+    embed_interval(interval, pixels, width, height)
 
     hidden_length = len(binary_text) * interval
     print("az interval értéke: ", interval)
@@ -347,19 +376,12 @@ def embed_text_in_image(image_path, output_path, binary_text):
     img.save(output_path)
 
 
-
-
-
-
-
-
-
 #szöveg kinyerése
 def extract_hidden_text_with_key(image):
     pixels = image.load()
     width, height = image.size
     
-    interval = extraxt_interval(image)
+    interval = extract_interval(image)
     hidden_length = search_64_bit_key(image)
     validation_data = create_validation_list(image, hidden_length, interval)
 
@@ -496,7 +518,7 @@ def extract_hidden_image(image_path, output_path, key_hex: str):
         pixel = pixels[width_base_image - 1 - i, height_base_image - 1]
         metadata_bits += str(pixel[0] & 1)
 
-    # felbontás és hossz visszaalakítása
+    # felbontás és hossza visszaalakítása
     resolution_bits = metadata_bits[:32]
     length_bits = metadata_bits[32:64]
 
@@ -538,583 +560,427 @@ def extract_hidden_image(image_path, output_path, key_hex: str):
     print(f"Titkosított rejtett kép kinyerve és visszafejtve: {output_path}")
 
 
-    """
-    ======================================================================================================================================================================
-    =========================================================itt kezdődik a gui===========================================================================================
-    ======================================================================================================================================================================
-    """
+# ============================================================
+# MODERN FELHASZNÁLÓI FELÜLET 
+# ============================================================
 
-class SteganographyApp(QMainWindow):
+ctk.set_appearance_mode("System")
+ctk.set_default_color_theme("blue")
+
+class SteganographyApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+
+        self.title("StegBen")
+        self.geometry("850x670")
+        self.minsize(750, 550)
+
+        # Adatváltozók
         self.current_image_path = None
         self.current_image = None
         self.key_image_path = None
         self.key_image = None
+        self.base_image_path = None
+        self.base_image = None
         self.hidden_image_path = None
         self.hidden_image = None
+        self.key_image_path_img = None
+        self.key_image_img = None
         self.current_key64 = None
         self.current_key256_hex = None
-        self.init_ui()
+
+        # Fő füles panel (Tabview)
+        self.tabview = ctk.CTkTabview(self, width=800, height=570)
+        self.tabview.pack(padx=20, pady=10, fill="both", expand=True)
+
+        self.tabview.add("Szöveg elrejtése/kinyerése")
+        self.tabview.add("Kép elrejtése/kinyerése")
+
+        self.setup_text_tab()
+        self.setup_image_tab()
+
+        # Státusz sáv legalul
+        self.lbl_status = ctk.CTkLabel(self, text="Kész", anchor="w", font=("Helvetica", 12, "italic"))
+        self.lbl_status.pack(side="bottom", fill="x", padx=20, pady=5)
+
+    def set_status(self, text):
+        self.lbl_status.configure(text=text)
+
+    # --- 1. FÜL: SZÖVEG ELRENDEZÉS (GOMBOK BALRA IGAZÍTVA) ---
+    def setup_text_tab(self):
+        tab = self.tabview.tab("Szöveg elrejtése/kinyerése")
+
+        container = ctk.CTkFrame(tab, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Kép elérési út és választó gomb (pontosan balra igazítva)
+        self.lbl_text_img_path = ctk.CTkLabel(container, text="Nincs kép kiválasztva", wraplength=700, anchor="w")
+        self.lbl_text_img_path.pack(pady=(10, 2), fill="x", anchor="w")
+
+        btn_select_img = ctk.CTkButton(container, text="Kép kiválasztása", command=self.select_image)
+        btn_select_img.pack(pady=5, anchor="w")
+
+        # Külön kulcs checkbox (balra igazítva)
+        self.chk_sep_key_text_var = ctk.BooleanVar(value=False)
+        self.chk_sep_key = ctk.CTkCheckBox(container, text="Külön kép használata a kulcsokhoz", 
+                                           variable=self.chk_sep_key_text_var, command=self.toggle_key_image_selection)
+        self.chk_sep_key.pack(pady=10, anchor="w")
+
+        # Külön kulcskép panel (Közvetlenül a checkbox ALÁ, de még a szövegmező FÖLÉ kerül)
+        self.frame_key_img = ctk.CTkFrame(container, fg_color="transparent")
         
-    def init_ui(self):
-        self.setWindowTitle('Digitális szteganográfia Alkalmazás')
-        self.setGeometry(100, 100, 900, 700)
+        self.lbl_text_key_path = ctk.CTkLabel(self.frame_key_img, text="Nincs kulcskép kiválasztva", wraplength=700, anchor="w")
+        self.lbl_text_key_path.pack(pady=2, fill="x", anchor="w")
         
-        # Központi widget és tabok
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        self.btn_select_key_text = ctk.CTkButton(self.frame_key_img, text="Kulcskép kiválasztása", command=self.select_key_image)
+        self.btn_select_key_text.pack(pady=5, anchor="w")
+
+        # Szövegbeviteli mező (szépen elhelyezve)
+        lbl_text_prompt = ctk.CTkLabel(container, text="Szöveg:", font=("Helvetica", 12, "bold"), anchor="w")
+        lbl_text_prompt.pack(pady=(10, 2), anchor="w")
+
+        self.text_edit = ctk.CTkTextbox(container, height=150, activate_scrollbars=True)
+        self.text_edit.pack(fill="both", expand=True, pady=5)
+
+        # Funkciógombok alul
+        btn_frame = ctk.CTkFrame(container, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=(15, 5))
+        btn_frame.columnconfigure((0, 1, 2, 3), weight=1)
+
+        ctk.CTkButton(btn_frame, text="Elrejtés (új kép)", command=self.hide_text_new_image).grid(row=0, column=0, padx=5, sticky="ew")
+        ctk.CTkButton(btn_frame, text="Módosítás", command=self.modify_image).grid(row=0, column=1, padx=5, sticky="ew")
+        ctk.CTkButton(btn_frame, text="Kinyerés", command=self.extract_text).grid(row=0, column=2, padx=5, sticky="ew")
+        ctk.CTkButton(btn_frame, text="Szöveg másolása", command=self.copy_text).grid(row=0, column=3, padx=5, sticky="ew")
+
+    # --- 2. FÜL: KÉP ELRENDEZÉS (SZÉPEN EGYMÁS ALÁ IGAZÍTVA, KULCSKÉPPEL A HELYÉN) ---
+    def setup_image_tab(self):
+        tab = self.tabview.tab("Kép elrejtése/kinyerése")
+
+        container = ctk.CTkFrame(tab, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Alapkép szekció (balra igazított gombbal)
+        self.lbl_base_path = ctk.CTkLabel(container, text="Nincs alapkép kiválasztva", wraplength=700, anchor="w")
+        self.lbl_base_path.pack(pady=(10, 2), fill="x", anchor="w")
+
+        btn_select_base = ctk.CTkButton(container, text="Alapkép kiválasztása", command=self.select_base_image)
+        btn_select_base.pack(pady=5, anchor="w")
+
+        # Rejtendő kép szekció (balra igazított gombbal)
+        self.lbl_hidden_path = ctk.CTkLabel(container, text="Nincs rejtendő kép kiválasztva", wraplength=700, anchor="w")
+        self.lbl_hidden_path.pack(pady=(15, 2), fill="x", anchor="w")
+
+        btn_select_hidden = ctk.CTkButton(container, text="Rejtendő kép kiválasztása", command=self.select_hidden_image)
+        btn_select_hidden.pack(pady=5, anchor="w")
+
+        # Kulcskép checkbox (A gombok felett struktúrában, a rejtendő kép alatt közvetlenül)
+        self.chk_sep_key_img_var = ctk.BooleanVar(value=False)
+        self.chk_sep_key_img = ctk.CTkCheckBox(container, text="Külön kép használata a kulcsokhoz", 
+                                              variable=self.chk_sep_key_img_var, command=self.toggle_key_image_selection_img)
+        self.chk_sep_key_img.pack(pady=15, anchor="w")
+
+        # Kulcskép al-keret (csak szükség esetén pack-elve, a checkbox után)
+        self.frame_key_img_img = ctk.CTkFrame(container, fg_color="transparent")
+
+        self.lbl_img_key_path = ctk.CTkLabel(self.frame_key_img_img, text="Nincs kulcskép kiválasztva", wraplength=700, anchor="w")
+        self.lbl_img_key_path.pack(pady=2, fill="x", anchor="w")
         
-        # Tab widget létrehozása
-        tabs = QTabWidget()
-        main_layout.addWidget(tabs)
-        
-        # Szöveg tab
-        text_tab = QWidget()
-        self.setup_text_tab(text_tab)
-        tabs.addTab(text_tab, "Szöveg elrejtése/kinyerése")
-        
-        # Kép tab
-        image_tab = QWidget()
-        self.setup_image_tab(image_tab)
-        tabs.addTab(image_tab, "Kép elrejtése/kinyerése")
-        
-        # Státusz sor
-        self.status_label = QLabel("Kész")
-        main_layout.addWidget(self.status_label)
-        
-    def setup_text_tab(self, tab):
-        layout = QVBoxLayout(tab)
-        
-        # Kép kiválasztás a szöveghez
-        image_group = QGroupBox("Kép a szöveg elrejtéséhez")
-        image_layout = QHBoxLayout()
-        
-        self.image_path_label = QLabel("Nincs kép kiválasztva")
-        self.image_path_label.setWordWrap(True)
-        
-        select_image_btn = QPushButton("Kép kiválasztása")
-        select_image_btn.clicked.connect(self.select_image)
-        
-        image_layout.addWidget(self.image_path_label)
-        image_layout.addWidget(select_image_btn)
-        image_group.setLayout(image_layout)
-        layout.addWidget(image_group)
-        
-        # Külön kulcskép opció
-        key_checkbox_layout = QHBoxLayout()
-        self.use_separate_key_image = QCheckBox("Külön kép használata a kulcsokhoz")
-        self.use_separate_key_image.stateChanged.connect(self.toggle_key_image_selection)
-        key_checkbox_layout.addWidget(self.use_separate_key_image)
-        key_checkbox_layout.addStretch()
-        layout.addLayout(key_checkbox_layout)
-        
-        # Külön kulcskép kiválasztás
-        self.key_image_group = QGroupBox("Kulcskép kiválasztása")
-        self.key_image_group.setEnabled(False)
-        key_image_layout = QHBoxLayout()
-        
-        self.key_image_path_label = QLabel("Nincs kulcskép kiválasztva")
-        self.key_image_path_label.setWordWrap(True)
-        
-        select_key_image_btn = QPushButton("Kulcskép kiválasztása")
-        select_key_image_btn.clicked.connect(self.select_key_image)
-        
-        key_image_layout.addWidget(self.key_image_path_label)
-        key_image_layout.addWidget(select_key_image_btn)
-        self.key_image_group.setLayout(key_image_layout)
-        layout.addWidget(self.key_image_group)
-        
-        # Szöveg szerkesztő
-        text_group = QGroupBox("Szöveg")
-        text_layout = QVBoxLayout()
-        
-        self.text_edit = QTextEdit()
-        self.text_edit.setPlaceholderText("Ide írja a rejtendő szöveget...")
-        text_layout.addWidget(self.text_edit)
-        
-        text_group.setLayout(text_layout)
-        layout.addWidget(text_group)
-        
-        # Műveletek szöveghez
-        text_actions_group = QGroupBox("Műveletek szöveggel")
-        text_actions_layout = QHBoxLayout()
-        
-        hide_new_btn = QPushButton("Elrejtés (új kép)")
-        hide_new_btn.clicked.connect(self.hide_text_new_image)
-        
-        modify_btn = QPushButton("Módosítás")
-        modify_btn.clicked.connect(self.modify_image)
-        
-        extract_btn = QPushButton("Kinyerés")
-        extract_btn.clicked.connect(self.extract_text)
-        
-        copy_btn = QPushButton("Szöveg másolása")
-        copy_btn.clicked.connect(self.copy_text)
-        
-        text_actions_layout.addWidget(hide_new_btn)
-        text_actions_layout.addWidget(modify_btn)
-        text_actions_layout.addWidget(extract_btn)
-        text_actions_layout.addWidget(copy_btn)
-        text_actions_group.setLayout(text_actions_layout)
-        layout.addWidget(text_actions_group)
-        
-        layout.addStretch()
-    
-    def setup_image_tab(self, tab):
-        layout = QVBoxLayout(tab)
-        
-        # Alapkép kiválasztás
-        base_image_group = QGroupBox("Alapkép (ahová rejtünk)")
-        base_image_layout = QHBoxLayout()
-        
-        self.base_image_path_label = QLabel("Nincs alapkép kiválasztva")
-        self.base_image_path_label.setWordWrap(True)
-        
-        select_base_image_btn = QPushButton("Alapkép kiválasztása")
-        select_base_image_btn.clicked.connect(self.select_base_image)
-        
-        base_image_layout.addWidget(self.base_image_path_label)
-        base_image_layout.addWidget(select_base_image_btn)
-        base_image_group.setLayout(base_image_layout)
-        layout.addWidget(base_image_group)
-        
-        # Rejtendő kép kiválasztás
-        hidden_image_group = QGroupBox("Rejtendő kép")
-        hidden_image_layout = QHBoxLayout()
-        
-        self.hidden_image_path_label = QLabel("Nincs rejtendő kép kiválasztva")
-        self.hidden_image_path_label.setWordWrap(True)
-        
-        select_hidden_image_btn = QPushButton("Rejtendő kép kiválasztása")
-        select_hidden_image_btn.clicked.connect(self.select_hidden_image)
-        
-        hidden_image_layout.addWidget(self.hidden_image_path_label)
-        hidden_image_layout.addWidget(select_hidden_image_btn)
-        hidden_image_group.setLayout(hidden_image_layout)
-        layout.addWidget(hidden_image_group)
-        
-        # Külön kulcskép opció képekhez
-        key_checkbox_layout_img = QHBoxLayout()
-        self.use_separate_key_image_img = QCheckBox("Külön kép használata a kulcsokhoz")
-        self.use_separate_key_image_img.stateChanged.connect(self.toggle_key_image_selection_img)
-        key_checkbox_layout_img.addWidget(self.use_separate_key_image_img)
-        key_checkbox_layout_img.addStretch()
-        layout.addLayout(key_checkbox_layout_img)
-        
-        # Külön kulcskép kiválasztás képekhez
-        self.key_image_group_img = QGroupBox("Kulcskép kiválasztása")
-        self.key_image_group_img.setEnabled(False)
-        key_image_layout_img = QHBoxLayout()
-        
-        self.key_image_path_label_img = QLabel("Nincs kulcskép kiválasztva")
-        self.key_image_path_label_img.setWordWrap(True)
-        
-        select_key_image_img_btn = QPushButton("Kulcskép kiválasztása")
-        select_key_image_img_btn.clicked.connect(self.select_key_image_img)
-        
-        key_image_layout_img.addWidget(self.key_image_path_label_img)
-        key_image_layout_img.addWidget(select_key_image_img_btn)
-        self.key_image_group_img.setLayout(key_image_layout_img)
-        layout.addWidget(self.key_image_group_img)
-        
-        # Kimeneti fájl név
-        output_layout = QHBoxLayout()       
-        self.image_output_name = QLineEdit()
-        output_layout.addWidget(self.image_output_name)
-        layout.addLayout(output_layout)
-        
-        # Műveletek képhez
-        image_actions_group = QGroupBox("Műveletek képpel")
-        image_actions_layout = QHBoxLayout()
-        
-        hide_image_btn = QPushButton("Kép elrejtése")
-        hide_image_btn.clicked.connect(self.hide_image)
-        
-        extract_image_btn = QPushButton("Kép kinyerése")
-        extract_image_btn.clicked.connect(self.extract_image)
-        
-        image_actions_layout.addWidget(hide_image_btn)
-        image_actions_layout.addWidget(extract_image_btn)
-        image_actions_group.setLayout(image_actions_layout)
-        layout.addWidget(image_actions_group)
-        
-        layout.addStretch()
-    
-    def toggle_key_image_selection(self, state):
-        self.key_image_group.setEnabled(state == Qt.Checked)
-        if state != Qt.Checked:
+        self.btn_select_key_img = ctk.CTkButton(self.frame_key_img_img, text="Kulcskép kiválasztása", command=self.select_key_image_img)
+        self.btn_select_key_img.pack(pady=5, anchor="w")
+
+        # Műveleti gombok legalul
+        btn_frame_img = ctk.CTkFrame(container, fg_color="transparent")
+        btn_frame_img.pack(side="bottom", fill="x", pady=20)
+        btn_frame_img.columnconfigure((0, 1), weight=1)
+
+        btn_hide_img = ctk.CTkButton(btn_frame_img, text="Kép elrejtése", command=self.hide_image, height=42)
+        btn_hide_img.grid(row=0, column=0, padx=10, sticky="ew")
+
+        btn_extract_img = ctk.CTkButton(btn_frame_img, text="Kép kinyerése", command=self.extract_image, height=42)
+        btn_extract_img.grid(row=0, column=1, padx=10, sticky="ew")
+
+    # --- DINAMIKUS PANEL JELENLÉT VEZÉRLÉS ---
+
+    def toggle_key_image_selection(self):
+        if self.chk_sep_key_text_var.get():
+            # Pontosan a checkbox alá pack-eli be a kulcsképválasztót
+            self.frame_key_img.pack(pady=5, fill="x", after=self.chk_sep_key)
+        else:
+            self.frame_key_img.pack_forget()
             self.key_image_path = None
             self.key_image = None
             self.update_keys_from_images()
-    
-    def toggle_key_image_selection_img(self, state):
-        self.key_image_group_img.setEnabled(state == Qt.Checked)
-        if state != Qt.Checked:
-            self.key_image_path = None
-            self.key_image = None
-        
+
+    def toggle_key_image_selection_img(self):
+        if self.chk_sep_key_img_var.get():
+            # Pontosan a checkbox alá pack-eli be a képek fülön a kulcsképválasztót
+            self.frame_key_img_img.pack(pady=5, fill="x", after=self.chk_sep_key_img)
+        else:
+            self.frame_key_img_img.pack_forget()
+            self.key_image_path_img = None
+            self.key_image_img = None
+
+    # --- ESZKÖZTÁR ÉS INTERAKCIÓK ---
+
     def select_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Kép kiválasztása a szöveghez", "", 
-            "Kép fájlok (*.png *.jpg *.jpeg *.bmp *.tiff)"
+        file_path = filedialog.askopenfilename(
+            title="Kép kiválasztása a szöveghez",
+            filetypes=[("Kép fájlok", "*.png *.jpg *.jpeg *.bmp *.tiff")]
         )
-        
         if file_path:
             try:
                 self.current_image_path = file_path
                 self.current_image = Image.open(file_path)
-                self.image_path_label.setText(f"Kiválasztott kép: {os.path.basename(file_path)}")
-                self.status_label.setText(f"Kép betöltve: {os.path.basename(file_path)}")
+                self.lbl_text_img_path.configure(text=f"Kiválasztott kép: {os.path.basename(file_path)}")
+                self.set_status(f"Kép betöltve: {os.path.basename(file_path)}")
                 self.update_keys_from_images()
             except Exception as e:
-                QMessageBox.critical(self, "Hiba", f"Hiba a kép betöltésekor: {e}")
-    
+                messagebox.showerror("Hiba", f"Hiba a kép betöltésekor: {e}")
+
     def select_base_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Alapkép kiválasztása", "", 
-            "Kép fájlok (*.png *.jpg *.jpeg *.bmp *.tiff)"
+        file_path = filedialog.askopenfilename(
+            title="Alapkép kiválasztása",
+            filetypes=[("Kép fájlok", "*.png *.jpg *.jpeg *.bmp *.tiff")]
         )
-        
         if file_path:
             try:
                 self.base_image_path = file_path
                 self.base_image = Image.open(file_path)
-                self.base_image_path_label.setText(f"Alapkép: {os.path.basename(file_path)}")
-                self.status_label.setText(f"Alapkép betöltve: {os.path.basename(file_path)}")
-                
-                if not self.use_separate_key_image_img.isChecked():
-                    self.key_image = self.base_image
-                    self.key_image_path = file_path
+                self.lbl_base_path.configure(text=f"Alapkép: {os.path.basename(file_path)}")
+                self.set_status(f"Alapkép betöltve: {os.path.basename(file_path)}")
+                if not self.chk_sep_key_img_var.get():
+                    self.key_image_img = self.base_image
+                    self.key_image_path_img = file_path
             except Exception as e:
-                QMessageBox.critical(self, "Hiba", f"Hiba az alapkép betöltésekor: {e}")
-    
+                messagebox.showerror("Hiba", f"Hiba az alapkép betöltésekor: {e}")
+
     def select_hidden_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Rejtendő kép kiválasztása", "", 
-            "Kép fájlok (*.png *.jpg *.jpeg *.bmp *.tiff)"
+        file_path = filedialog.askopenfilename(
+            title="Rejtendő kép kiválasztása",
+            filetypes=[("Kép fájlok", "*.png *.jpg *.jpeg *.bmp *.tiff")]
         )
-        
         if file_path:
             try:
                 self.hidden_image_path = file_path
                 self.hidden_image = Image.open(file_path)
-                self.hidden_image_path_label.setText(f"Rejtendő kép: {os.path.basename(file_path)}")
-                self.status_label.setText(f"Rejtendő kép betöltve: {os.path.basename(file_path)}")
+                self.lbl_hidden_path.configure(text=f"Rejtendő kép: {os.path.basename(file_path)}")
+                self.set_status(f"Rejtendő kép betöltve: {os.path.basename(file_path)}")
             except Exception as e:
-                QMessageBox.critical(self, "Hiba", f"Hiba a rejtendő kép betöltésekor: {e}")
-    
+                messagebox.showerror("Hiba", f"Hiba a rejtendő kép betöltésekor: {e}")
+
     def select_key_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Kulcskép kiválasztása", "", 
-            "Kép fájlok (*.png *.jpg *.jpeg *.bmp *.tiff)"
+        file_path = filedialog.askopenfilename(
+            title="Kulcskép kiválasztása",
+            filetypes=[("Kép fájlok", "*.png *.jpg *.jpeg *.bmp *.tiff")]
         )
-        
         if file_path:
             try:
                 self.key_image_path = file_path
                 self.key_image = Image.open(file_path)
-                self.key_image_path_label.setText(f"Kulcskép: {os.path.basename(file_path)}")
-                self.status_label.setText(f"Kulcskép betöltve: {os.path.basename(file_path)}")
+                self.lbl_text_key_path.configure(text=f"Kulcskép: {os.path.basename(file_path)}")
+                self.set_status(f"Kulcskép betöltve: {os.path.basename(file_path)}")
                 self.update_keys_from_images()
             except Exception as e:
-                QMessageBox.critical(self, "Hiba", f"Hiba a kulcskép betöltésekor: {e}")
-    
+                messagebox.showerror("Hiba", f"Hiba a kulcskép betöltésekor: {e}")
+
     def select_key_image_img(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Kulcskép kiválasztása", "", 
-            "Kép fájlok (*.png *.jpg *.jpeg *.bmp *.tiff)"
+        file_path = filedialog.askopenfilename(
+            title="Kulcskép kiválasztása",
+            filetypes=[("Kép fájlok", "*.png *.jpg *.jpeg *.bmp *.tiff")]
         )
-        
         if file_path:
             try:
                 self.key_image_path_img = file_path
-                self.key_image = Image.open(file_path)
-                self.key_image_path_label_img.setText(f"Kulcskép: {os.path.basename(file_path)}")
-                self.status_label.setText(f"Kulcskép betöltve: {os.path.basename(file_path)}")
+                self.key_image_img = Image.open(file_path)
+                self.lbl_img_key_path.configure(text=f"Kulcskép: {os.path.basename(file_path)}")
+                self.set_status(f"Kulcskép betöltve: {os.path.basename(file_path)}")
             except Exception as e:
-                QMessageBox.critical(self, "Hiba", f"Hiba a kulcskép betöltésekor: {e}")
-    
+                messagebox.showerror("Hiba", f"Hiba a kulcskép betöltésekor: {e}")
+
     def update_keys_from_images(self):
         try:
             key_source_image = None
-            
-            if self.use_separate_key_image.isChecked() and self.key_image:
+            if self.chk_sep_key_text_var.get() and self.key_image:
                 key_source_image = self.key_image
             elif self.current_image:
                 key_source_image = self.current_image
-            
             if key_source_image:
                 key64_bits = generate_64_bit_key_from_image(key_source_image)
                 self.current_key64 = ''.join(str(bit) for bit in key64_bits)
-                
                 key256_bits = generate_256_bit_key_from_image(key_source_image)
                 key256_hex = self.bits_to_hex(key256_bits)
                 self.current_key256_hex = key256_hex.zfill(64)[:64]
-                
-                key_source = "kulcsképből" if self.use_separate_key_image.isChecked() else "a szöveg képéből"
-                self.status_label.setText(f"Kulcsok generálva {key_source}")
+                key_source = "kulcsképből" if self.chk_sep_key_text_var.get() else "a szöveg képéből"
+                self.set_status(f"Kulcsok generálva {key_source}")
             else:
                 self.current_key64 = None
                 self.current_key256_hex = None
-                
         except Exception as e:
-            print(f"Hiba a kulcsok frissítésekor: {e}")
             self.current_key64 = None
             self.current_key256_hex = None
 
-    def get_image_key_hex(self) -> str | None:
-        """
-        Visszaadja a képtitkosításhoz használandó 256-bites AES kulcsot hex-ben.
-        Ha külön kulcskép van kiválasztva, abból generál, egyébként az alapképből.
-        """
+    def get_image_key_hex(self) -> str or None:
         key_source = None
-        if self.use_separate_key_image_img.isChecked() and self.key_image:
-            key_source = self.key_image
+        if self.chk_sep_key_img_var.get() and self.key_image_img:
+            key_source = self.key_image_img
         elif hasattr(self, 'base_image') and self.base_image:
             key_source = self.base_image
-
-        if key_source is None:
-            return None
-
+        if key_source is None: return None
         key256_bits = generate_256_bit_key_from_image(key_source)
         key256_hex = self.bits_to_hex(key256_bits)
         return key256_hex.zfill(64)[:64]
-    
+
     def bits_to_hex(self, bits):
         hex_string = ''
         for i in range(0, len(bits), 4):
             if i+4 <= len(bits):
                 nibble = bits[i:i+4]
-                hex_digit = hex(int(''.join(str(b) for b in nibble), 2))[2:]
-                hex_string += hex_digit
+                hex_string += hex(int(''.join(str(b) for b in nibble), 2))[2:]
         return hex_string
-    
+
+    # --- KATTINTÁSI METÓDUSOK ---
+
     def hide_text_new_image(self):
         if not self.current_image:
-            QMessageBox.warning(self, "Figyelmeztetés", "Előbb válasszon ki egy képet a szöveghez!")
+            messagebox.showwarning("Figyelmeztetés", "Előbb válasszon ki egy képet a szöveghez!")
             return
-        
         if not self.current_key64 or not self.current_key256_hex:
-            QMessageBox.warning(self, "Figyelmeztetés", "Nem sikerült kulcsokat generálni! Ellenőrizze a kép(ek)et!")
+            messagebox.showwarning("Figyelmeztetés", "Nem sikerült kulcsokat generálni!")
             return
-        
-        text = self.text_edit.toPlainText()
+        text = self.text_edit.get("1.0", "end-1c").strip()
         if not text:
-            QMessageBox.warning(self, "Figyelmeztetés", "Írjon be szöveget az elrejtéshez!")
+            messagebox.showwarning("Figyelmeztetés", "Írjon be szöveget az elrejtéshez!")
             return
-        
         try:
-            # Szöveg titkosítása
             encrypted_text = aes_encrypt(text, self.current_key256_hex)
-            # Szöveg átalakítása bitekké
             text_bits = text_to_bits(encrypted_text)
             base, ext = os.path.splitext(self.current_image_path)
             output_path = f"{base}_hidden.png"
-            # Szöveg elrejtése + kulcs hozzáfűzése
             embed_text_in_image(self.current_image_path, output_path, text_bits)
-            self.status_label.setText(f"Szöveg elrejtve: {os.path.basename(output_path)}")
-            QMessageBox.information(self, "Siker", f"A szöveg sikeresen elrejtve!\nMentve: {output_path}")
+            self.set_status(f"Szöveg elrejtve: {os.path.basename(output_path)}")
+            messagebox.showinfo("Siker", f"A szöveg sikeresen elrejtve!\nMentve: {output_path}")
         except Exception as e:
-            QMessageBox.critical(self, "Hiba", f"Hiba a szöveg elrejtésekor: {e}")
-    
+            messagebox.showerror("Hiba", f"Hiba a szöveg elrejtésekor: {e}")
+
     def modify_image(self):
         if not self.current_image:
-            QMessageBox.warning(self, "Figyelmeztetés", "Előbb válasszon ki egy képet!")
+            messagebox.showwarning("Figyelmeztetés", "Előbb válasszon ki egy képet!")
             return
-
         if not self.current_key64 or not self.current_key256_hex:
-            QMessageBox.warning(self, "Figyelmeztetés", "Nem sikerült kulcsokat generálni! Ellenőrizze a kép(ek)et!")
+            messagebox.showwarning("Figyelmeztetés", "Nem sikerült kulcsokat generálni!")
             return
-
-        text = self.text_edit.toPlainText()
+        text = self.text_edit.get("1.0", "end-1c").strip()
         if not text:
-            QMessageBox.warning(self, "Figyelmeztetés", "Írjon be szöveget az elrejtéshez!")
+            messagebox.showwarning("Figyelmeztetés", "Írjon be szöveget!")
             return
-
-        reply = QMessageBox.question(self, 'Megerősítés', 
-                                    'Biztosan módosítani szeretné az eredeti képet?',
-                                    QMessageBox.Yes | QMessageBox.No, 
-                                    QMessageBox.No)
-
-        if reply == QMessageBox.Yes:
+        if messagebox.askyesno('Megerősítés', 'Biztosan módosítani szeretné az eredeti képet?'):
             try:
-                # Szöveg titkosítása
                 encrypted_text = aes_encrypt(text, self.current_key256_hex)
-                # Szöveg átalakítása bitekké
                 text_bits = text_to_bits(encrypted_text)
-
                 original_path = self.current_image_path
-                file_ext = os.path.splitext(original_path)[1].lower()
-
-                # Ha nem PNG, akkor az új mentési útvonal .png legyen
-                if file_ext != '.png':
-                    new_path = os.path.splitext(original_path)[0] + '.png'
-                else:
-                    new_path = original_path  # PNG esetén felülírjuk az eredetit
-
-                # Szöveg elrejtése a képbe (input: original_path, output: new_path)
+                new_path = original_path if os.path.splitext(original_path)[1].lower() == '.png' else os.path.splitext(original_path)[0] + '.png'
                 embed_text_in_image(original_path, new_path, text_bits)
-
-                # Ha új fájlt hoztunk létre (nem PNG eredeti), töröljük az eredetit
                 if new_path != original_path:
                     os.remove(original_path)
                     self.current_image_path = new_path
-
-                # Kép újratöltése
                 self.current_image = Image.open(self.current_image_path)
-                self.status_label.setText(f"Kép módosítva: {os.path.basename(self.current_image_path)}")
-                QMessageBox.information(self, "Siker", "A kép sikeresen módosítva!")
-
+                self.set_status(f"Kép módosítva: {os.path.basename(self.current_image_path)}")
+                messagebox.showinfo("Siker", "A kép sikeresen módosítva!")
             except Exception as e:
-                QMessageBox.critical(self, "Hiba", f"Hiba a kép módosításakor: {e}")
-    
+                messagebox.showerror("Hiba", f"Hiba a kép módosításakor: {e}")
+
     def extract_text(self):
         if not self.current_image:
-            QMessageBox.warning(self, "Figyelmeztetés", "Előbb válasszon ki egy képet!")
+            messagebox.showwarning("Figyelmeztetés", "Előbb válasszon ki egy képet!")
             return
-        
         if not self.current_key64 or not self.current_key256_hex:
-            QMessageBox.warning(self, "Figyelmeztetés", "Nem sikerült kulcsokat generálni! Ellenőrizze a kép(ek)et!")
+            messagebox.showwarning("Figyelmeztetés", "Nem sikerült kulcsokat generálni!")
             return
-        
         try:
-            # Rejtett szöveg kinyerése
             extracted_encrypted_text = extract_hidden_text_with_key(self.current_image)
-            
             if not extracted_encrypted_text:
-                QMessageBox.warning(self, "Figyelmeztetés", "Nem található rejtett szöveg a képben!")
+                messagebox.showwarning("Figyelmeztetés", "Nem található rejtett szöveg a képben!")
                 return
-            
-            # Szöveg visszafejtése
             decrypted_text = aes_decrypt(extracted_encrypted_text, self.current_key256_hex)
-            # Szöveg megjelenítése
-            self.text_edit.setText(decrypted_text)
-            self.status_label.setText("Szöveg sikeresen kinyerve és visszafejtve!")
+            self.text_edit.delete("1.0", "end")
+            self.text_edit.insert("1.0", decrypted_text)
+            self.set_status("Szöveg sikeresen kinyerve!")
         except Exception as e:
-            QMessageBox.critical(self, "Hiba", f"Hiba a szöveg kinyerésekor: {e}")
-    
+            messagebox.showerror("Hiba", f"Hiba a szöveg kinyerésekor: {e}")
+
+    def copy_text(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.text_edit.get("1.0", "end-1c").strip())
+        self.set_status("Szöveg másolva")
+
     def hide_image(self):
         if not hasattr(self, 'base_image') or not self.base_image:
-            QMessageBox.warning(self, "Figyelmeztetés", "Előbb válasszon ki egy alapképet!")
+            messagebox.showwarning("Figyelmeztetés", "Előbb válasszon ki egy alapképet!")
             return
-        
         if not hasattr(self, 'hidden_image') or not self.hidden_image:
-            QMessageBox.warning(self, "Figyelmeztetés", "Előbb válasszon ki egy rejtendő képet!")
+            messagebox.showwarning("Figyelmeztetés", "Előbb válasszon ki egy rejtendő képet!")
             return
-        
-        # Kulcskép ellenőrzése
-        if self.use_separate_key_image_img.isChecked() and not self.key_image:
-            QMessageBox.warning(self, "Figyelmeztetés", "Válasszon ki egy kulcsképet!")
+        if self.chk_sep_key_img_var.get() and not self.key_image_img:
+            messagebox.showwarning("Figyelmeztetés", "Válasszon ki egy kulcsképet!")
             return
-        
         key_hex = self.get_image_key_hex()
         if not key_hex:
-            QMessageBox.warning(self, "Figyelmeztetés", "Nem sikerült AES kulcsot generálni a képhez!")
+            messagebox.showwarning("Figyelmeztetés", "Nem sikerült AES kulcsot generálni!")
             return
-        
         try:
-            # Rejtett kép bitekké alakítása és titkosítása
             encrypted_bits, resolution_bits, length_bits = hidden_image_to_bits(
                 self.base_image_path, self.hidden_image_path, key_hex
             )
-            
-            # Kimeneti fájlnév
-            output_name = self.image_output_name.text().strip()
-            if not output_name:
-                base, ext = os.path.splitext(self.base_image_path)
-                output_name = f"{base}_with_hidden.png"
-            else:
-                # Biztosítsuk, hogy a megfelelő kiterjesztés legyen
-                if not output_name.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
-                    output_name += '.png'
-                output_name = os.path.join(os.path.dirname(self.base_image_path), output_name)
-            
-            # Titkosított kép elrejtése
-            hidden_bits_to_image(
-                self.base_image_path, output_name,
-                encrypted_bits, resolution_bits, length_bits
-            )
-            
-            self.status_label.setText(f"Titkosított kép elrejtve: {os.path.basename(output_name)}")
-            QMessageBox.information(self, "Siker", 
-                f"A kép AES-256 titkosítással sikeresen elrejtve!\nMentve: {output_name}")
-            
+            base, ext = os.path.splitext(self.base_image_path)
+            output_name = f"{base}_with_hidden.png"
+            hidden_bits_to_image(self.base_image_path, output_name, encrypted_bits, resolution_bits, length_bits)
+            self.set_status(f"Kép elrejtve: {os.path.basename(output_name)}")
+            messagebox.showinfo("Siker", f"A kép sikeresen elrejtve!\nMentve: {output_name}")
         except Exception as e:
-            QMessageBox.critical(self, "Hiba", f"Hiba a kép elrejtésekor: {e}")
-    
+            messagebox.showerror("Hiba", f"Hiba a kép elrejtésekor: {e}")
+
     def extract_image(self):
         if not hasattr(self, 'base_image') or not self.base_image:
-            QMessageBox.warning(self, "Figyelmeztetés", "Előbb válasszon ki egy alapképet, amely tartalmazza a rejtett képet!")
+            messagebox.showwarning("Figyelmeztetés", "Előbb válasszon ki egy alapképet!")
             return
-        
-        # Kulcskép ellenőrzése
-        if self.use_separate_key_image_img.isChecked() and not self.key_image:
-            QMessageBox.warning(self, "Figyelmeztetés", "Válasszon ki egy kulcsképet a visszafejtéshez!")
+        if self.chk_sep_key_img_var.get() and not self.key_image_img:
+            messagebox.showwarning("Figyelmeztetés", "Válasszon ki egy kulcsképet!")
             return
-        
         key_hex = self.get_image_key_hex()
         if not key_hex:
-            QMessageBox.warning(self, "Figyelmeztetés", "Nem sikerült AES kulcsot generálni a visszafejtéshez!")
+            messagebox.showwarning("Figyelmeztetés", "Nem sikerült AES kulcsot generálni!")
             return
-        
         try:
-            import tempfile
-            
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                 tmp_path = tmp.name
-            
-            # Titkosított kép kinyerése és visszafejtése
             extract_hidden_image(self.base_image_path, tmp_path, key_hex)
             
-            # Előnézeti ablak megnyitása
-            self.preview_window = QWidget()
-            self.preview_window.setWindowTitle("Kinyert és visszafejtett kép")
-            self.preview_window.setMinimumSize(400, 400)
-            preview_layout = QVBoxLayout(self.preview_window)
-            
-            # Kép megjelenítése
-            image_label = QLabel()
-            pixmap = QPixmap(tmp_path)
-            pixmap = pixmap.scaled(600, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            image_label.setPixmap(pixmap)
-            image_label.setAlignment(Qt.AlignCenter)
-            preview_layout.addWidget(image_label)
-            
-            # Mentés gomb
-            def save_image():
-                save_path, _ = QFileDialog.getSaveFileName(
-                    self.preview_window, "Kép mentése", "kinyert_kep.png",
-                    "Kép fájlok (*.png *.jpg *.jpeg *.bmp *.tiff)"
-                )
-                if save_path:
-                    import shutil
-                    shutil.copy(tmp_path, save_path)
-                    self.status_label.setText(f"Kép mentve: {os.path.basename(save_path)}")
-                    QMessageBox.information(self.preview_window, "Siker", f"Kép mentve:\n{save_path}")
-            
-            save_btn = QPushButton("Mentés")
-            save_btn.clicked.connect(save_image)
-            preview_layout.addWidget(save_btn)
-            
-            self.preview_window.show()
-            self.status_label.setText("Titkosított rejtett kép sikeresen kinyerve és visszafejtve")
-        
-        except Exception as e:
-            QMessageBox.critical(self, "Hiba", f"Hiba a kép kinyerésekor/visszafejtésekor: {e}")
-    
-    def copy_text(self):
-        clipboard = QApplication.clipboard()
-        clipboard.setText(self.text_edit.toPlainText())
-        self.status_label.setText("Szöveg másolva")
+            # Preview (előnézeti) ablak beállítása
+            preview_window = ctk.CTkToplevel(self)
+            preview_window.title("Kinyert és visszafejtett kép")
+            preview_window.geometry("550x550")
+            preview_window.after(100, lambda: preview_window.focus())
 
-def main():
-    app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon(resource_path("icon.ico")))
-    window = SteganographyApp()
-    window.show()
-    sys.exit(app.exec_())
+            preview_img = Image.open(tmp_path)
+            photo = ImageTk.PhotoImage(preview_img.resize((400, 400), Image.Resampling.LANCZOS))
+            lbl_img = ctk.CTkLabel(preview_window, image=photo, text="")
+            lbl_img.image = photo
+            lbl_img.pack(pady=15, fill="both", expand=True)
+            
+            def save_extracted():
+                save_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG kép", "*.png")])
+                if save_path:
+                    shutil.copy(tmp_path, save_path)
+                    self.set_status(f"Kép mentve: {os.path.basename(save_path)}")
+                    messagebox.showinfo("Siker", f"Kép mentve:\n{save_path}", parent=preview_window)
+            
+            btn_save = ctk.CTkButton(preview_window, text="Kép mentése", command=save_extracted)
+            btn_save.pack(pady=15)
+            self.set_status("Kép sikeresen kinyerve.")
+        except Exception as e:
+            messagebox.showerror("Hiba", f"Hiba: {e}")
+
 
 if __name__ == '__main__':
-    main()
+    app = SteganographyApp()
+    app.mainloop()
