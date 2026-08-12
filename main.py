@@ -19,14 +19,21 @@ def zero_last_bit(r, g, b):
     g -= g % 2
     b -= b % 2
     return r, g, b
+
 def resource_path(path):
     try:
         base = sys._MEIPASS
     except AttributeError:
         base = os.path.abspath(".")
     return os.path.join(base, path)
-    
 
+def reverse(number):
+    if number == 1:
+        return 0
+    else:
+        return 1
+
+#validációs lista elkészítése
 def create_validation_list(image, hidden_length, interval):
     pixels = image.load()
     width, height = image.size
@@ -77,6 +84,7 @@ def create_validation_list(image, hidden_length, interval):
                     validation_data[position] = 0
     return validation_data
 
+#64 bites kulcs keresése
 def search_64_bit_key(image):
     pixels = image.load()
     width, height = image.size
@@ -134,6 +142,18 @@ def generate_64_bit_key_from_image(img):
         else:
             print("Kép túl kicsi")
     return key64bit
+
+#64 bites kulcs elrejtése
+def hide_64_bit_key(hidden_length, pixels, width, height, key64bit):
+    for k in range(64):
+        idx = hidden_length + k
+        i = idx // height
+        j = idx % height
+        if i >= width:
+            break
+        pixel = list(pixels[i, j])
+        pixel[0] = (pixel[0] & ~1) | key64bit[k]
+        pixels[i, j] = tuple(pixel)
 
 #256 bites kulcs az AES titkosításhoz
 def generate_256_bit_key_from_image(img):
@@ -264,22 +284,26 @@ def bits_to_bytes(bits: str) -> bytes:
         for i in range(0, len(bits) - 7, 8)
     )
 
-def reverse(number):
-    if number == 1:
-        return 0
-    else:
-        return 1
-
 #interval elrejtése 
 def embed_interval(interval, pixels, width, height):
     interval_bits = [int(bit) for bit in format(interval & 0xFFFFFFFF, '032b')]
     interval_bits = interval_encryption(pixels, interval_bits, width, height)
+    x_position = 6
+    y_position = 7
+
 
     for i in range(32):
         x, y = width - 1, height - 1 - i
         pixel = list(pixels[x, y])
-        pixel[0] = (pixel[0] & ~1) | interval_bits[i]
+        r, g, b = pixels[x_position, y_position][:3]
+        r, g, b = zero_last_bit(r, g, b)
+        selected_channel = ((r+g+b)//2)%3
+        pixel[selected_channel] = (pixel[selected_channel] & ~1) | interval_bits[i]
         pixels[x, y] = tuple(pixel)
+        x_position+= r +b
+        y_position+= r+g
+        x_position = x_position % width
+        y_position = y_position % height
 
 #interval kinyerése
 def extract_interval(image):
@@ -287,16 +311,25 @@ def extract_interval(image):
     width, height = image.size
     # intervallum bitjeinek kinyerése
     interval_bits = []
+    x_position = 6
+    y_position = 7
+
+
     for i in range(32):
         pixel = pixels[width - 1, height - 1 - i]
-        interval_bits.append(pixel[0] & 1)
+        r, g, b = pixels[x_position, y_position][:3]
+        r, g, b = zero_last_bit(r, g, b)
+        selected_channel = ((r+g+b)//2)%3
+        interval_bits.append(pixel[selected_channel] & 1)
+        x_position+= r +b
+        y_position+= r+g
+        x_position = x_position % width
+        y_position = y_position % height
     decrypted_interval = interval_encryption(pixels, interval_bits, width, height)
-    # bitek -> egész szám
+    # bitek visszaalakítása
     interval = int(''.join(map(str, decrypted_interval)), 2)
     print(f"Kinyert intervallum: {interval}")
-    return interval
-
-
+    return interval        
 
 #interval bit szintű titkosítása
 def interval_encryption(pixels, interval_bits, width, height):
@@ -327,14 +360,12 @@ def interval_encryption(pixels, interval_bits, width, height):
         y_position = y_position % height
     return encrypted_interval_bits
 
+#szöveg elrejtése a képben
 def embed_text_in_image(image_path, output_path, binary_text):
     img = Image.open(image_path).convert('RGB')
     pixels = img.load()
     width, height = img.size
     interval = int(((width * height)- 200) // len(binary_text))
-
- 
-   
 
     #interval elrejtése
     embed_interval(interval, pixels, width, height)
@@ -343,9 +374,10 @@ def embed_text_in_image(image_path, output_path, binary_text):
     print("az interval értéke: ", interval)
     print("Elrejtett adat hossza: ", hidden_length)
 
-
+    #validációs lista elkészítése
     validation_list = create_validation_list(img, hidden_length, interval)
 
+    #kezdő pozíció inicializálása
     x_position = 6
     y_position = 7
     for i in range(width):
@@ -384,16 +416,8 @@ def embed_text_in_image(image_path, output_path, binary_text):
  
 
     key64bit = generate_64_bit_key_from_image(img)
-    for k in range(64):
-        idx = hidden_length + k
-        i = idx // height
-        j = idx % height
-        if i >= width:
-            break
-        pixel = list(pixels[i, j])
-        pixel[0] = (pixel[0] & ~1) | key64bit[k]
-        pixels[i, j] = tuple(pixel)
-        
+    hide_64_bit_key(hidden_length, pixels, width, height, key64bit)
+      
     img.save(output_path)
 
 #szöveg kinyerése
